@@ -66,6 +66,14 @@ namespace mozilla::baseprofiler::detail {
 using ThreadIdType = long;
 }  // namespace mozilla::baseprofiler::detail
 
+// ------------------------------------------------------- Haiku
+#  elif defined(XP_HAIKU)
+
+#    include <OS.h>
+namespace mozilla::baseprofiler::detail {
+using ThreadIdType = thread_id;
+}  // namespace mozilla::baseprofiler::detail
+
 // ------------------------------------------------------- Others
 #  else
 
