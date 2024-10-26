@@ -13,7 +13,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+// Workaround for gcc_hidden.h hack of libxul.so
+#pragma GCC visibility push(default)
 #include <SoundPlayer.h>
+#pragma GCC visibility pop
 #include <OS.h>
 
 static const int MAX_STREAMS = 16;
