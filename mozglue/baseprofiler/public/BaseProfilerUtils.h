@@ -69,9 +69,8 @@ using ThreadIdType = long;
 // ------------------------------------------------------- Haiku
 #  elif defined(XP_HAIKU)
 
-#    include <OS.h>
 namespace mozilla::baseprofiler::detail {
-using ThreadIdType = thread_id;
+using ThreadIdType = int;
 }  // namespace mozilla::baseprofiler::detail
 
 // ------------------------------------------------------- Others
