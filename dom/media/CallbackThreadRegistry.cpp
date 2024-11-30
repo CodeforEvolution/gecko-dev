@@ -96,7 +96,9 @@ void CallbackThreadRegistry::Unregister(ProfilerThreadId aThreadId) {
       return;
     }
   }
+#ifndef XP_HAIKU
   MOZ_ASSERT_UNREACHABLE("Current thread was not registered");
+#endif
 }
 
 }  // namespace mozilla
