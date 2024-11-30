@@ -45,8 +45,8 @@ panel {
 
   /* Disable border-radius and shadow for Haiku popups */
   @media (-moz-platform: linux) {
-    --panel-border-radius: 0;
-    --panel-shadow-margin: 0;
+    --panel-border-radius: 0px;
+    --panel-shadow-margin: 0px;
   }
 
   @media (-moz-platform: macos) {
