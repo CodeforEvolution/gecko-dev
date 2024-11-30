@@ -88,6 +88,15 @@ ProfilerThreadId profiler_current_thread_id() {
   return ProfilerThreadId::FromNativeId(id);
 }
 
+// ------------------------------------------------------- Haiku
+#  elif defined(XP_HAIKU)
+
+#    include <OS.h>
+
+ProfilerThreadId profiler_current_thread_id() {
+  return ProfilerThreadId::FromNativeId(find_thread(NULL));
+}
+
 // ------------------------------------------------------- Others
 #  else
 

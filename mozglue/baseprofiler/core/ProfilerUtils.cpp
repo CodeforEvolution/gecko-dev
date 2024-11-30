@@ -129,6 +129,19 @@ BaseProfilerThreadId profiler_current_thread_id() {
 
 }  // namespace mozilla::baseprofiler
 
+// ------------------------------------------------------- Haiku
+#  elif defined(XP_HAIKU)
+
+#    include <OS.h>
+
+namespace mozilla::baseprofiler {
+
+BaseProfilerThreadId profiler_current_thread_id() {
+  return BaseProfilerThreadId::FromNativeId(find_thread(NULL));
+}
+
+}  // namespace mozilla::baseprofiler
+
 // ------------------------------------------------------- Others
 #  else
 
