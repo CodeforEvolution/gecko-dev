@@ -95,9 +95,7 @@ else
     endif
 endif
 
-ifndef SKIP_SHLIBSIGN
 libs: install
-endif
 ifdef CHECKLOC
 	$(MAKE) $(CHECKLOC)
 endif
