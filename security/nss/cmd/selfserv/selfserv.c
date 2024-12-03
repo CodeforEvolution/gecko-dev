@@ -2881,7 +2881,7 @@ main(int argc, char **argv)
         FILE *tmpfile = fopen(pidFile, "w+");
 
         if (tmpfile) {
-            fprintf(tmpfile, "%d", (int)getpid());
+            fprintf(tmpfile, "%d", getpid());
             fclose(tmpfile);
         }
     }
