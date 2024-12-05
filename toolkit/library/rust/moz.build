@@ -8,6 +8,12 @@ include("gkrust-features.mozbuild")
 
 RustLibrary("gkrust", gkrust_features, is_gkrust=True)
 
+if CONFIG["OS_ARCH"] == "Haiku":
+    # Rust 1.83+ requires arc4random_buf()
+    OS_LIBS += [
+	    "bsd"
+    ]
+
 for feature in gkrust_features:
     # We don't want to enable refcount logging during rusttests, since the
     # relevant FFI symbols wouldn't be found.
