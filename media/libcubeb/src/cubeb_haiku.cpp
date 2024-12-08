@@ -7,7 +7,6 @@
 
 #include "cubeb-internal.h"
 #include "cubeb/cubeb.h"
-#include "cubeb_resampler.h"
 #include "cubeb_utils.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,13 +14,17 @@
 
 // Workaround for gcc_hidden.h hack of libxul.so
 #pragma GCC visibility push(default)
+#include <Application.h>
+#include <Roster.h>
 #include <SoundPlayer.h>
-#pragma GCC visibility pop
+#include <String.h>
+#include <NodeInfo.h>
+#include <Path.h>
 #include <OS.h>
+#pragma GCC visibility pop
 
-static const int MAX_STREAMS = 16;
 static const int MAX_CHANNELS = 2;
-static const int FIFO_SIZE = 4096;
+static const char DEFAULT_CONTEXT_NAME[] = "Cubeb";
 
 extern "C" {
 int haiku_init(cubeb ** context, char const * context_name);
@@ -31,7 +34,6 @@ static char const* haiku_get_backend_id(cubeb* context);
 static int haiku_get_max_channel_count(cubeb* ctx, uint32_t* max_channels);
 static int haiku_get_min_latency(cubeb* ctx, cubeb_stream_params params, uint32_t* latency_frames);
 static int haiku_get_preferred_sample_rate(cubeb* ctx, uint32_t* rate);
-static cubeb_stream* context_alloc_stream(cubeb* context, char const* stream_name);
 static int haiku_stream_init(cubeb* context,
                  cubeb_stream** stream,
                  char const* stream_name,
@@ -88,33 +90,31 @@ struct cubeb_stream {
   /**/
 
   pthread_mutex_t mutex;
-  bool in_use;
 
   cubeb_data_callback data_callback;
   cubeb_state_callback state_callback;
   cubeb_stream_params params;
 
-  cubeb_resampler* resampler;
-
   uint64_t position;
   bool pause;
-  float volume;
   
+  float volume;  
+
   BSoundPlayer* sound_player;
   media_raw_audio_format format;
+
   char stream_name[256];
 };
 
 struct cubeb {
   struct cubeb_ops const* ops;
   pthread_mutex_t mutex;
-  
-  cubeb_stream streams[MAX_STREAMS];
-  unsigned int active_streams;
-  
+
   bool active;
   uint32_t sample_rate;
   uint32_t latency;
+  
+  char context_name[256];
 };
 
 static void
@@ -122,6 +122,9 @@ haiku_audio_callback(void* cookie, void* buffer, size_t size, const media_raw_au
 {
   cubeb_stream* stm = static_cast<cubeb_stream*>(cookie);
   
+  if (buffer == nullptr || cookie == nullptr)
+  	return;
+
   if (stm->pause) {
     memset(buffer, 0, size);
     return;
@@ -137,14 +140,8 @@ haiku_audio_callback(void* cookie, void* buffer, size_t size, const media_raw_au
     case media_raw_audio_format::B_AUDIO_FLOAT:
       frames /= sizeof(float);
       break;
-    case media_raw_audio_format::B_AUDIO_INT:
-      frames /= sizeof(int32_t);
-      break;
     case media_raw_audio_format::B_AUDIO_SHORT:
       frames /= sizeof(int16_t);
-      break;
-    case media_raw_audio_format::B_AUDIO_CHAR:
-      frames /= sizeof(int8_t);
       break;
   }
 
@@ -155,18 +152,6 @@ haiku_audio_callback(void* cookie, void* buffer, size_t size, const media_raw_au
     pthread_mutex_unlock(&stm->mutex);
     stm->state_callback(stm, stm->user_ptr, CUBEB_STATE_ERROR);
     return;
-  }
-
-  if (stm->volume != 1.0f) {
-    switch (format.format) {
-      case media_raw_audio_format::B_AUDIO_FLOAT: {
-        float* out = static_cast<float*>(buffer);
-        for (long i = 0; i < frames * format.channel_count; ++i) {
-          out[i] *= stm->volume;
-        }
-        break;
-      }
-    }
   }
 
   stm->position += got;
@@ -211,14 +196,14 @@ haiku_init(cubeb** context, char const* context_name)
   ctx->ops = &cubeb_haiku_ops;
   ctx->mutex = PTHREAD_MUTEX_INITIALIZER;
   
-  for (int i = 0; i < MAX_STREAMS; i++) {
-    ctx->streams[i].mutex = PTHREAD_MUTEX_INITIALIZER;
-  }
-
   ctx->active = true;
   ctx->sample_rate = 48000;
   ctx->latency = 128;
-  
+  if (context_name)
+    snprintf(ctx->context_name, 255, "%s", context_name);
+  else
+    snprintf(ctx->context_name, 255, "%s", DEFAULT_CONTEXT_NAME);
+
   *context = ctx;
   return CUBEB_OK;
 }
@@ -257,20 +242,6 @@ haiku_get_preferred_sample_rate(cubeb* ctx, uint32_t* rate)
   return CUBEB_OK;
 }
 
-static cubeb_stream*
-context_alloc_stream(cubeb* context, char const* stream_name)
-{
-  for (int i = 0; i < MAX_STREAMS; i++) {
-    if (!context->streams[i].in_use) {
-      cubeb_stream* stm = &context->streams[i];
-      stm->in_use = true;
-      snprintf(stm->stream_name, 255, "%s_%u", stream_name ? stream_name : "cubeb", i);
-      return stm;
-    }
-  }
-  return NULL;
-}
-
 static int
 haiku_stream_init(cubeb* context,
                  cubeb_stream** stream,
@@ -291,12 +262,26 @@ haiku_stream_init(cubeb* context,
   *stream = NULL;
 
   pthread_mutex_lock(&context->mutex);
-  cubeb_stream* stm = context_alloc_stream(context, stream_name);
-  pthread_mutex_unlock(&context->mutex);
+  
+  cubeb_stream* stm = reinterpret_cast<cubeb_stream *>(calloc(1, sizeof(*stm)));
 
   if (!stm) {
+  	pthread_mutex_unlock(&context->mutex);    
     return CUBEB_ERROR;
   }
+
+  stm->mutex = PTHREAD_MUTEX_INITIALIZER;
+  if (stream_name) {
+  	if (strcmp(stream_name, "AudioStream") == 0) {
+  		snprintf(stm->stream_name, 255, "%s", context->context_name);
+  	} else {
+  		snprintf(stm->stream_name, 255, "%s", stream_name);
+  	}
+  } else {
+  	snprintf(stm->stream_name, 255, "%s", context->context_name);
+  }
+  
+  pthread_mutex_unlock(&context->mutex);
 
   pthread_mutex_lock(&stm->mutex);
 
@@ -307,38 +292,8 @@ haiku_stream_init(cubeb* context,
   stm->state_callback = state_callback;
   stm->position = 0;
   stm->volume = 1.0f;
-
   stm->format = cubeb_format_to_haiku(output_stream_params);
-
-  stm->sound_player = new BSoundPlayer(&stm->format,
-                                     stm->stream_name,
-                                     haiku_audio_callback,
-                                     nullptr,
-                                     stm);
-
-  if (stm->sound_player->InitCheck() != B_OK) {
-    pthread_mutex_unlock(&stm->mutex);
-    haiku_stream_destroy(stm);
-    return CUBEB_ERROR;
-  }
-
-  if (output_stream_params->rate != stm->format.frame_rate) {
-    stm->resampler = cubeb_resampler_create(
-        stm,
-        nullptr,
-        &stm->params,
-        output_stream_params->rate,
-        data_callback,
-        user_ptr,
-        CUBEB_RESAMPLER_QUALITY_DEFAULT,
-        CUBEB_RESAMPLER_RECLOCK_NONE);
-
-    if (!stm->resampler) {
-      pthread_mutex_unlock(&stm->mutex);
-      haiku_stream_destroy(stm);
-      return CUBEB_ERROR;
-    }
-  }
+  stm->sound_player = nullptr;
 
   *stream = stm;
   pthread_mutex_unlock(&stm->mutex);
@@ -349,49 +304,50 @@ haiku_stream_init(cubeb* context,
 static void
 haiku_stream_destroy(cubeb_stream* stream)
 {
-  if (!stream) {
+  if (!stream)
     return;
-  }
 
-  pthread_mutex_lock(&stream->mutex);
-  
-  if (stream->sound_player) {
-    stream->sound_player->Stop();
-    delete stream->sound_player;
-    stream->sound_player = nullptr;
-  }
-
-  if (stream->resampler) {
-    cubeb_resampler_destroy(stream->resampler);
-    stream->resampler = nullptr;
-  }
-
-  stream->in_use = false;
-  pthread_mutex_unlock(&stream->mutex);
+  haiku_stream_stop(stream);
 }
 
 static int
 haiku_stream_start(cubeb_stream* stream)
 {
   if (!stream->sound_player) {
-    return CUBEB_ERROR;
+    stream->sound_player = new BSoundPlayer(&stream->format,
+                                     stream->stream_name,
+                                     haiku_audio_callback,
+                                     nullptr,
+                                     stream);
+
+    if (stream->sound_player->InitCheck() != B_OK)
+      return CUBEB_ERROR;
+
+    stream->pause = false;
+
+    haiku_stream_set_volume(stream, stream->volume);
+
+    stream->sound_player->Start();
+    stream->sound_player->SetHasData(true);
   }
 
-  stream->pause = false;
-  stream->sound_player->Start();
   stream->state_callback(stream, stream->user_ptr, CUBEB_STATE_STARTED);
+
   return CUBEB_OK;
 }
 
 static int
 haiku_stream_stop(cubeb_stream* stream)
 {
-  if (!stream->sound_player) {
-    return CUBEB_ERROR;
+  if (stream->sound_player) {
+    stream->pause = true;
+    stream->sound_player->SetHasData(false);
+    stream->sound_player->Stop();
+
+    delete stream->sound_player;
+    stream->sound_player = nullptr;
   }
 
-  stream->pause = true;
-  stream->sound_player->Stop();
   stream->state_callback(stream, stream->user_ptr, CUBEB_STATE_STOPPED);
   return CUBEB_OK;
 }
@@ -406,7 +362,7 @@ haiku_stream_get_position(cubeb_stream* stream, uint64_t* position)
 static int
 haiku_stream_get_latency(cubeb_stream* stream, uint32_t* latency_frames)
 {
-  if (!stream || !stream->sound_player) {
+  if (!stream) {
     return CUBEB_ERROR;
   }
 
@@ -423,8 +379,14 @@ haiku_stream_set_volume(cubeb_stream* stream, float volume)
   if (!stream) {
     return CUBEB_ERROR;
   }
-
+  
   stream->volume = volume;
+
+  if (!stream->sound_player)
+    return CUBEB_ERROR;
+  
+  stream->sound_player->SetVolume(volume);
+
   return CUBEB_OK;
 }
 
@@ -471,23 +433,25 @@ haiku_enumerate_devices(cubeb* context, cubeb_device_type type,
   
   cubeb_device_info* dev = &collection->device[0];
   memset(dev, 0, sizeof(cubeb_device_info));
+  
+  char const * a_name = "default";
 
-  dev->device_id = "haiku-output";
+  dev->device_id = a_name;
   dev->devid = (cubeb_devid)dev->device_id;
-  dev->friendly_name = "Haiku Audio Output";
-  dev->group_id = "haiku-output";
-  dev->vendor_name = "Haiku";
+  dev->friendly_name = a_name;
+  dev->group_id = a_name;
+  dev->vendor_name = a_name;
   dev->type = CUBEB_DEVICE_TYPE_OUTPUT;
   dev->state = CUBEB_DEVICE_STATE_ENABLED;
   dev->preferred = CUBEB_DEVICE_PREF_ALL;
   dev->format = CUBEB_DEVICE_FMT_F32NE;
   dev->default_format = CUBEB_DEVICE_FMT_F32NE;
   dev->max_channels = MAX_CHANNELS;
-  dev->min_rate = 44100;
-  dev->max_rate = 96000;
+  dev->min_rate = rate;
+  dev->max_rate = rate;
   dev->default_rate = rate;
-  dev->latency_lo = 128;
-  dev->latency_hi = 512;
+  dev->latency_lo = 0;
+  dev->latency_hi = 0;
 
   return CUBEB_OK;
 }
