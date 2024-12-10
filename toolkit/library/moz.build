@@ -339,6 +339,10 @@ if CONFIG["OS_ARCH"] == "Darwin":
         "-weak_framework MediaPlayer",
     ]
 
+if CONFIG["OS_ARCH"] == "Haiku":
+    OS_LIBS += [
+        "be",
+    ]
 
 if CONFIG["OS_ARCH"] == "WINNT":
     OS_LIBS += [

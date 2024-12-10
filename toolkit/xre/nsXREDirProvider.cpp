@@ -79,6 +79,10 @@
 #ifdef XP_IOS
 #  include "UIKitDirProvider.h"
 #endif
+#ifdef XP_HAIKU
+#  include <FindDirectory.h>
+#  include <Path.h>
+#endif
 
 #if defined(MOZ_CONTENT_TEMP_DIR)
 #  include "mozilla/SandboxSettings.h"
@@ -380,7 +384,7 @@ nsXREDirProvider::GetFile(const char* aProperty, bool* aPersistent,
   } else if (!strcmp(aProperty, XRE_USER_NATIVE_MANIFESTS)) {
     rv = GetUserDataDirectoryHome(getter_AddRefs(file), false);
     NS_ENSURE_SUCCESS(rv, rv);
-#  if defined(XP_MACOSX)
+#  if defined(XP_MACOSX) || defined(XP_HAIKU)
     rv = file->AppendNative("Mozilla"_ns);
 #  else   // defined(XP_MACOSX)
     rv = file->AppendNative(".mozilla"_ns);
@@ -1287,6 +1291,12 @@ nsresult nsXREDirProvider::GetUserDataDirectoryHome(nsIFile** aFile,
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = NS_NewLocalFile(path, true, getter_AddRefs(localDir));
+#elif defined(XP_HAIKU)
+  BPath settingsDir;
+  status_t status = find_directory(B_USER_SETTINGS_DIRECTORY, &settingsDir);
+  if (status != B_OK) return NS_ERROR_FAILURE;
+  rv = NS_NewNativeLocalFile(nsDependentCString(settingsDir.Path()), true,
+                             getter_AddRefs(localDir));
 #elif defined(XP_UNIX)
   const char* homeDir = getenv("HOME");
   if (!homeDir || !*homeDir) return NS_ERROR_FAILURE;
@@ -1396,7 +1406,7 @@ nsresult nsXREDirProvider::AppendSysUserExtensionPath(nsIFile* aFile) {
 
   nsresult rv;
 
-#if defined(XP_MACOSX) || defined(XP_WIN)
+#if defined(XP_MACOSX) || defined(XP_WIN) || defined(XP_HAIKU)
 
   static const char* const sXR = "Mozilla";
   rv = aFile->AppendNative(nsDependentCString(sXR));
@@ -1455,7 +1465,7 @@ nsresult nsXREDirProvider::AppendProfilePath(nsIFile* aFile, bool aLocal) {
   }
   NS_ENSURE_SUCCESS(rv, rv);
 
-#elif defined(XP_WIN)
+#elif defined(XP_WIN) || defined(XP_HAIKU)
   if (!profile.IsEmpty()) {
     rv = AppendProfileString(aFile, profile.get());
   } else {
